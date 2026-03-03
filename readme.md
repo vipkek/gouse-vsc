@@ -1,8 +1,12 @@
-# [gouse-vsc](https://marketplace.visualstudio.com/items?itemName=looshch.gouse)
+# gouse-vsc
 
 Toggle ‘declared and not used’ errors in Go by using idiomatic `_ = notUsedVar`
 and leaving a TODO comment.
 ![a demo gif](https://raw.githubusercontent.com/looshch/gouse/master/demo.gif)
+
+Available on
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=looshch.gouse)
+and [Open VSX Registry](https://open-vsx.org/extension/looshch/gouse).
 
 ## Dependencies
 
@@ -15,7 +19,7 @@ go install github.com/looshch/gouse@latest
 <!-- prettier-ignore -->
 > [!CAUTION]
 >
-> Non-stable (archived) Go versions require older `gouse` version.
+> Archived Go versions require older `gouse` version.
 >
 > | Go version   | gouse version |
 > | -------------|---------------|

@@ -1,5 +1,8 @@
 .DS_Store
-.vscode
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+.vscode-test
 node_modules
 out
 *.vsix

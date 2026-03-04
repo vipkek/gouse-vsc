@@ -1,35 +1,3 @@
 #!/usr/bin/env sh
 
-FILES_TO_IGNORE=(
-	".husky"
-)
-CHANGED_FILES=($(git diff --name-only --cached))
-
-get_files_to_check() {
-	local IGNORED_FILES=("$@" "${FILES_TO_IGNORE[@]}")
-	local IGNORED_FILES_PATTERN=$(printf "\|%s" "${IGNORED_FILES[@]}")
-	local FILES_TO_CHECK=($(printf "%s\n" "${CHANGED_FILES[@]}" | \
-		grep -v "${IGNORED_FILES_PATTERN:2}"))
-	echo "${FILES_TO_CHECK[@]}"
-}
-
-FILES_TO_FORMAT=($(get_files_to_check))
-
-NON_LINTABLE_FILES=(
-	".json"
-	".prettier"
-	".md"
-)
-FILES_TO_LINT=($(get_files_to_check "${NON_LINTABLE_FILES[@]}"))
-
-if [ ${#FILES_TO_FORMAT[@]} -gt 0 ]; then
-	prettier --write "${FILES_TO_FORMAT[@]}"
-fi
-
-if [ ${#FILES_TO_LINT[@]} -gt 0 ]; then
-	eslint --fix "${FILES_TO_LINT[@]}"
-fi
-
-if [ ${#CHANGED_FILES[@]} -gt 0 ]; then
-	git add "${CHANGED_FILES[@]}"
-fi
+node ./scripts/pre-commit.cjs

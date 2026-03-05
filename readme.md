@@ -37,8 +37,8 @@ go install github.com/looshch/gouse/v2@latest
 “gouse: Toggle ‘declared and not used’ errors” command toggles the errors in a
 file.
 
-When `gopls` reports a ‘declared and not used’ diagnostic, the extension also
-adds a light-bulb quick fix that runs `gouse` for the current file.
+The extension adds a light-bulb quick fix that runs `gouse` for the current
+file.
 
 You can also run the same fix from the editor right-click context menu or from
 the editor Source Action menu as `source.fixAll.gouse`.

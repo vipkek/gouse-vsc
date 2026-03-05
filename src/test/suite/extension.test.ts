@@ -61,6 +61,12 @@ const createDocumentWithUnusedVariable =
 			content: 'package main\nfunc main() {\n\tvar unused int\n}\n',
 		})
 
+const createDocumentWithGouseTodo = async (): Promise<vscode.TextDocument> =>
+	vscode.workspace.openTextDocument({
+		language: 'go',
+		content: 'package main\n/* TODO: gouse */\nfunc main() {}\n',
+	})
+
 const createUnusedDiagnostic = (): vscode.Diagnostic =>
 	new vscode.Diagnostic(
 		new vscode.Range(new vscode.Position(2, 5), new vscode.Position(2, 11)),
@@ -175,6 +181,30 @@ describe('gouse extension', () => {
 		assert.strictEqual(action, undefined)
 	})
 
+	it('creates a code action when gouse TODO marker is present', async () => {
+		const expectedTitle = getToggleCommandTitle()
+		const document = await createDocumentWithGouseTodo()
+		const action = createGouseCodeAction(
+			document,
+			[createIrrelevantDiagnostic()],
+			vscode.CodeActionKind.QuickFix,
+		)
+
+		if (!action) {
+			throw new Error('Expected a quick fix action for gouse TODO marker.')
+		}
+		assert.ok(action.command)
+		assert.strictEqual(action.kind?.value, vscode.CodeActionKind.QuickFix.value)
+		assert.strictEqual(action.title, expectedTitle)
+		assert.strictEqual(action.command.command, TOGGLE_COMMAND_ID)
+		assert.strictEqual(action.command.title, expectedTitle)
+		assert.strictEqual(
+			(action.command.arguments?.[0] as vscode.Uri | undefined)?.toString(),
+			document.uri.toString(),
+		)
+		assert.strictEqual(action.diagnostics, undefined)
+	})
+
 	it('provider emits only quick fix actions when quick fix kind is requested', async () => {
 		const expectedTitle = getToggleCommandTitle()
 		const provider = newGouseCodeActionProvider()
@@ -206,6 +236,38 @@ describe('gouse extension', () => {
 		} finally {
 			collection.dispose()
 		}
+	})
+
+	it('provider emits quick fix action when gouse TODO marker is present', async () => {
+		const expectedTitle = getToggleCommandTitle()
+		const provider = newGouseCodeActionProvider()
+		const document = await createDocumentWithGouseTodo()
+
+		const actions = await getProvidedActions(provider, document, {
+			diagnostics: [],
+			only: vscode.CodeActionKind.QuickFix,
+			triggerKind: vscode.CodeActionTriggerKind.Invoke,
+		})
+		assert.strictEqual(actions.length, 1)
+		const firstAction = actions[0]
+		if (!firstAction) {
+			throw new Error('Expected one quick fix action for gouse TODO marker.')
+		}
+		assert.ok(firstAction.command)
+		assert.strictEqual(
+			firstAction.kind?.value,
+			vscode.CodeActionKind.QuickFix.value,
+		)
+		assert.strictEqual(firstAction.title, expectedTitle)
+		assert.strictEqual(firstAction.command.command, TOGGLE_COMMAND_ID)
+		assert.strictEqual(firstAction.command.title, expectedTitle)
+		assert.strictEqual(
+			(
+				firstAction.command.arguments?.[0] as vscode.Uri | undefined
+			)?.toString(),
+			document.uri.toString(),
+		)
+		assert.strictEqual(firstAction.diagnostics, undefined)
 	})
 
 	it('provider emits only source fix all actions when source fix all kind is requested', async () => {

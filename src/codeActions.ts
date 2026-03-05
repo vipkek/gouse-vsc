@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 
 const UNUSED_DIAGNOSTIC_FRAGMENT = 'declared and not used'
+const GOUSE_TODO_MARKER = '/* TODO: gouse */'
 const ACTION_TITLE = 'gouse: Toggle ‘declared and not used’ errors'
 
 const createSourceFixAllKind = (): vscode.CodeActionKind =>
@@ -14,7 +15,8 @@ export function createGouseCodeAction(
 	const matchingDiagnostics = diagnostics.filter((diagnostic) =>
 		diagnostic.message.includes(UNUSED_DIAGNOSTIC_FRAGMENT),
 	)
-	if (matchingDiagnostics.length === 0) return undefined
+	const hasTodoMarker = document.getText().includes(GOUSE_TODO_MARKER)
+	if (matchingDiagnostics.length === 0 && !hasTodoMarker) return undefined
 
 	const action = new vscode.CodeAction(ACTION_TITLE, kind)
 	action.command = {
@@ -22,7 +24,9 @@ export function createGouseCodeAction(
 		title: ACTION_TITLE,
 		arguments: [document.uri],
 	}
-	action.diagnostics = matchingDiagnostics
+	if (matchingDiagnostics.length > 0) {
+		action.diagnostics = matchingDiagnostics
+	}
 	return action
 }
 

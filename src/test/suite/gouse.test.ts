@@ -23,6 +23,10 @@ interface TestHarnessOptions {
 interface ToggleHarnessOptions {
 	activeDocument?: vscode.TextDocument
 	openedDocument?: vscode.TextDocument
+	configuredPath?: string
+	resolvedExecutablePath?: string
+	execFile?: ToggleDependencies['execFile']
+	resolveInstalledPath?: ToggleDependencies['resolveInstalledPath']
 }
 
 const createExecError = (
@@ -97,13 +101,16 @@ const createToggleHarness = (options: ToggleHarnessOptions = {}) => {
 	const execCalls: ExecCall[] = []
 
 	const dependencies: ToggleDependencies = {
-		getConfiguredExecutablePath: () => '',
-		getResolvedExecutablePath: () => 'gouse',
-		execFile: (file, args) => {
-			execCalls.push({ file, args: [...args] })
-			return Promise.resolve({ stdout: '', stderr: '' })
-		},
-		resolveInstalledPath: () => Promise.resolve(undefined),
+		getConfiguredExecutablePath: () => options.configuredPath ?? '',
+		getResolvedExecutablePath: () => options.resolvedExecutablePath ?? 'gouse',
+		execFile:
+			options.execFile ??
+			((file, args) => {
+				execCalls.push({ file, args: [...args] })
+				return Promise.resolve({ stdout: '', stderr: '' })
+			}),
+		resolveInstalledPath:
+			options.resolveInstalledPath ?? (() => Promise.resolve(undefined)),
 		getActiveTextDocument: () => options.activeDocument,
 		openTextDocument: () => {
 			if (!options.openedDocument) {
@@ -307,5 +314,43 @@ describe('gouse toggle validation', () => {
 		])
 		assert.deepStrictEqual(harness.errorMessages, [])
 		assert.deepStrictEqual(harness.execCalls, [])
+	})
+
+	it('uses resolved installed path when gouse is missing on PATH', async () => {
+		const resolvedExecutablePath = 'C:\\Users\\tester\\go\\bin\\gouse.exe'
+		const harness = createToggleHarness({
+			activeDocument: createDocumentDouble({
+				languageId: 'go',
+				scheme: 'file',
+				saveResult: true,
+			}),
+			execFile: (file, args) => {
+				harness.execCalls.push({ file, args: [...args] })
+				if (file === 'gouse') {
+					return Promise.reject(
+						createExecError('gouse missing from PATH', { code: 'ENOENT' }),
+					)
+				}
+				if (file === resolvedExecutablePath) {
+					return Promise.resolve({ stdout: '', stderr: '' })
+				}
+				return Promise.reject(
+					new Error(`Unexpected command: ${file} ${args.join(' ')}`),
+				)
+			},
+			resolveInstalledPath: () => Promise.resolve(resolvedExecutablePath),
+		})
+
+		await toggleWithDependencies(undefined, harness.dependencies)
+
+		assert.deepStrictEqual(harness.warningMessages, [])
+		assert.deepStrictEqual(harness.errorMessages, [])
+		assert.deepStrictEqual(harness.execCalls, [
+			{ file: 'gouse', args: ['-w', '/tmp/gouse-test.go'] },
+			{
+				file: resolvedExecutablePath,
+				args: ['-w', '/tmp/gouse-test.go'],
+			},
+		])
 	})
 })

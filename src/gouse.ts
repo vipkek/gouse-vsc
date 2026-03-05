@@ -243,6 +243,26 @@ export async function _toggle(
 		}
 	}
 
+	const discoveredInstalledPath = await params.resolveInstalledPath()
+	if (discoveredInstalledPath && discoveredInstalledPath !== executablePath) {
+		try {
+			await params.execFile(discoveredInstalledPath, [
+				'-w',
+				document.uri.fsPath,
+			])
+			installedExecutablePath = discoveredInstalledPath
+			return
+		} catch (error) {
+			const execError = asExecError(error)
+			if (!isMissingExecutable(execError)) {
+				await params.showErrorMessage(
+					`gouse failed: ${getExecErrorMessage(execError)}`,
+				)
+				return
+			}
+		}
+	}
+
 	const installAction = await params.showErrorMessage(
 		'gouse is not installed or is not available on PATH.',
 		INSTALL_ACTION,

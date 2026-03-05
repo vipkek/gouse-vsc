@@ -1,16 +1,16 @@
 import * as vscode from 'vscode'
 import {
-	createGouseCodeActionProvider,
+	newGouseCodeActionProvider,
 	getGouseSourceFixAllKind,
 } from './codeActions'
-import { toggle } from './gouse'
+import { autoUpdateOnStartup, toggle } from './gouse'
 
 export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('gouse.toggle', toggle),
 		vscode.languages.registerCodeActionsProvider(
 			{ language: 'go', scheme: 'file' },
-			createGouseCodeActionProvider(),
+			newGouseCodeActionProvider(),
 			{
 				providedCodeActionKinds: [
 					vscode.CodeActionKind.QuickFix,
@@ -19,4 +19,6 @@ export function activate(context: vscode.ExtensionContext) {
 			},
 		),
 	)
+
+	void autoUpdateOnStartup()
 }

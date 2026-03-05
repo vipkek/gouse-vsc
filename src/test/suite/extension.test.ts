@@ -2,12 +2,24 @@ import * as assert from 'assert'
 import { describe, it } from 'mocha'
 import * as vscode from 'vscode'
 import {
-	createGouseQuickFix,
-	createGouseSourceFixAll,
+	createGouseCodeAction,
 	getGouseSourceFixAllKind,
+	newGouseCodeActionProvider,
 } from '../../codeActions'
 
 const EXTENSION_ID = 'looshch.gouse'
+const TOGGLE_COMMAND_ID = 'gouse.toggle'
+
+interface CommandContribution {
+	command?: string
+	title?: string
+}
+
+interface ExtensionPackageJson {
+	contributes?: {
+		commands?: CommandContribution[]
+	}
+}
 
 const waitForActivation = async (
 	extension: vscode.Extension<unknown>,
@@ -21,6 +33,85 @@ const waitForActivation = async (
 		}
 		await new Promise((resolve) => setTimeout(resolve, 50))
 	}
+}
+
+const getToggleCommandTitle = (): string => {
+	const extension = vscode.extensions.getExtension(EXTENSION_ID)
+	if (!extension) {
+		throw new Error(`Missing extension: ${EXTENSION_ID}`)
+	}
+
+	const packageJson = extension.packageJSON as ExtensionPackageJson
+	const commandContribution = packageJson.contributes?.commands?.find(
+		(command) => command.command === TOGGLE_COMMAND_ID,
+	)
+	if (!commandContribution?.title) {
+		throw new Error(
+			`Could not find title for command contribution: ${TOGGLE_COMMAND_ID}`,
+		)
+	}
+
+	return commandContribution.title
+}
+
+const createDocumentWithUnusedVariable =
+	async (): Promise<vscode.TextDocument> =>
+		vscode.workspace.openTextDocument({
+			language: 'go',
+			content: 'package main\nfunc main() {\n\tvar unused int\n}\n',
+		})
+
+const createUnusedDiagnostic = (): vscode.Diagnostic =>
+	new vscode.Diagnostic(
+		new vscode.Range(new vscode.Position(2, 5), new vscode.Position(2, 11)),
+		'unused declared and not used',
+		vscode.DiagnosticSeverity.Error,
+	)
+
+const createIrrelevantDiagnostic = (): vscode.Diagnostic =>
+	new vscode.Diagnostic(
+		new vscode.Range(new vscode.Position(2, 5), new vscode.Position(2, 11)),
+		'some other diagnostic',
+		vscode.DiagnosticSeverity.Warning,
+	)
+
+const assertGouseActionShape = (
+	action: vscode.CodeAction,
+	document: vscode.TextDocument,
+	expectedKind: vscode.CodeActionKind,
+	expectedTitle: string,
+	diagnostics: readonly vscode.Diagnostic[],
+): void => {
+	assert.ok(action.command)
+	assert.strictEqual(action.kind?.value, expectedKind.value)
+	assert.strictEqual(action.title, expectedTitle)
+	assert.strictEqual(action.command.command, TOGGLE_COMMAND_ID)
+	assert.strictEqual(action.command.title, expectedTitle)
+	assert.strictEqual(
+		(action.command.arguments?.[0] as vscode.Uri | undefined)?.toString(),
+		document.uri.toString(),
+	)
+	assert.deepStrictEqual(action.diagnostics, diagnostics)
+}
+
+const getProvidedActions = async (
+	provider: vscode.CodeActionProvider,
+	document: vscode.TextDocument,
+	context: vscode.CodeActionContext,
+): Promise<vscode.CodeAction[]> => {
+	const cancellation = new vscode.CancellationTokenSource()
+	const provided = provider.provideCodeActions(
+		document,
+		new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0)),
+		context,
+		cancellation.token,
+	)
+	if (!provided) return []
+	const resolved = await Promise.resolve(provided)
+	if (!resolved) return []
+	return resolved.filter(
+		(item): item is vscode.CodeAction => item instanceof vscode.CodeAction,
+	)
 }
 
 describe('gouse extension', () => {
@@ -38,68 +129,116 @@ describe('gouse extension', () => {
 		await waitForActivation(extension)
 
 		const commands = await vscode.commands.getCommands(true)
-		assert.ok(commands.includes('gouse.toggle'))
+		assert.ok(commands.includes(TOGGLE_COMMAND_ID))
 	})
 
-	it('creates a quick fix for declared and not used diagnostics', async () => {
-		const document = await vscode.workspace.openTextDocument({
-			language: 'go',
-			content: 'package main\nfunc main() {\n\tvar unused int\n}\n',
-		})
-		const diagnostic = new vscode.Diagnostic(
-			new vscode.Range(new vscode.Position(2, 5), new vscode.Position(2, 11)),
-			'unused declared and not used',
-			vscode.DiagnosticSeverity.Error,
-		)
+	it('creates gouse code actions for both supported kinds', async () => {
+		const expectedTitle = getToggleCommandTitle()
+		const document = await createDocumentWithUnusedVariable()
+		const diagnostic = createUnusedDiagnostic()
+		const testCases = [
+			{
+				name: 'quick fix',
+				kind: vscode.CodeActionKind.QuickFix,
+			},
+			{
+				name: 'source fix all',
+				kind: getGouseSourceFixAllKind(),
+			},
+		]
 
-		const action = createGouseQuickFix(document, [diagnostic])
-		if (!action) {
-			throw new Error(
-				'Expected a quick fix for the unused variable diagnostic.',
+		for (const testCase of testCases) {
+			const action = createGouseCodeAction(
+				document,
+				[diagnostic],
+				testCase.kind,
 			)
+			if (!action) {
+				throw new Error(
+					`Expected a ${testCase.name} action for the unused variable diagnostic.`,
+				)
+			}
+			assertGouseActionShape(action, document, testCase.kind, expectedTitle, [
+				diagnostic,
+			])
 		}
-		if (!action.command) {
-			throw new Error('Expected the quick fix to invoke the gouse command.')
-		}
-
-		assert.strictEqual(action.kind?.value, vscode.CodeActionKind.QuickFix.value)
-		assert.strictEqual(action.command.command, 'gouse.toggle')
-		assert.strictEqual(
-			(action.command.arguments?.[0] as vscode.Uri | undefined)?.toString(),
-			document.uri.toString(),
-		)
-		assert.deepStrictEqual(action.diagnostics, [diagnostic])
 	})
 
-	it('creates a source fix all action for declared and not used diagnostics', async () => {
-		const document = await vscode.workspace.openTextDocument({
-			language: 'go',
-			content: 'package main\nfunc main() {\n\tvar unused int\n}\n',
-		})
-		const diagnostic = new vscode.Diagnostic(
-			new vscode.Range(new vscode.Position(2, 5), new vscode.Position(2, 11)),
-			'unused declared and not used',
-			vscode.DiagnosticSeverity.Error,
+	it('returns no code action for unrelated diagnostics', async () => {
+		const document = await createDocumentWithUnusedVariable()
+		const action = createGouseCodeAction(
+			document,
+			[createIrrelevantDiagnostic()],
+			vscode.CodeActionKind.QuickFix,
 		)
 
-		const action = createGouseSourceFixAll(document, [diagnostic])
-		if (!action) {
-			throw new Error(
-				'Expected a source fix all action for the unused variable diagnostic.',
-			)
-		}
-		if (!action.command) {
-			throw new Error(
-				'Expected the source fix all action to invoke the gouse command.',
-			)
-		}
+		assert.strictEqual(action, undefined)
+	})
 
-		assert.strictEqual(action.kind?.value, getGouseSourceFixAllKind().value)
-		assert.strictEqual(action.command.command, 'gouse.toggle')
-		assert.strictEqual(
-			(action.command.arguments?.[0] as vscode.Uri | undefined)?.toString(),
-			document.uri.toString(),
+	it('provider emits only quick fix actions when quick fix kind is requested', async () => {
+		const expectedTitle = getToggleCommandTitle()
+		const provider = newGouseCodeActionProvider()
+		const document = await createDocumentWithUnusedVariable()
+		const diagnostic = createUnusedDiagnostic()
+		const collection = vscode.languages.createDiagnosticCollection(
+			'gouse-test-provider-quickfix',
 		)
-		assert.deepStrictEqual(action.diagnostics, [diagnostic])
+		collection.set(document.uri, [diagnostic])
+
+		try {
+			const actions = await getProvidedActions(provider, document, {
+				diagnostics: [diagnostic],
+				only: vscode.CodeActionKind.QuickFix,
+				triggerKind: vscode.CodeActionTriggerKind.Invoke,
+			})
+			assert.strictEqual(actions.length, 1)
+			const firstAction = actions[0]
+			if (!firstAction) {
+				throw new Error('Expected one quick fix action.')
+			}
+			assertGouseActionShape(
+				firstAction,
+				document,
+				vscode.CodeActionKind.QuickFix,
+				expectedTitle,
+				[diagnostic],
+			)
+		} finally {
+			collection.dispose()
+		}
+	})
+
+	it('provider emits only source fix all actions when source fix all kind is requested', async () => {
+		const expectedTitle = getToggleCommandTitle()
+		const provider = newGouseCodeActionProvider()
+		const document = await createDocumentWithUnusedVariable()
+		const diagnostic = createUnusedDiagnostic()
+		const sourceFixAllKind = getGouseSourceFixAllKind()
+		const collection = vscode.languages.createDiagnosticCollection(
+			'gouse-test-provider-sourcefixall',
+		)
+		collection.set(document.uri, [diagnostic])
+
+		try {
+			const actions = await getProvidedActions(provider, document, {
+				diagnostics: [diagnostic],
+				only: sourceFixAllKind,
+				triggerKind: vscode.CodeActionTriggerKind.Invoke,
+			})
+			assert.strictEqual(actions.length, 1)
+			const firstAction = actions[0]
+			if (!firstAction) {
+				throw new Error('Expected one source fix all action.')
+			}
+			assertGouseActionShape(
+				firstAction,
+				document,
+				sourceFixAllKind,
+				expectedTitle,
+				[diagnostic],
+			)
+		} finally {
+			collection.dispose()
+		}
 	})
 })

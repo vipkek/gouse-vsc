@@ -1,82 +1,59 @@
 import * as vscode from 'vscode'
 
 const UNUSED_DIAGNOSTIC_FRAGMENT = 'declared and not used'
+const ACTION_TITLE = 'gouse: Toggle ‘declared and not used’ errors'
 
 const createSourceFixAllKind = (): vscode.CodeActionKind =>
 	vscode.CodeActionKind.SourceFixAll.append('gouse')
 
-const getMatchingDiagnostics = (
+export function createGouseCodeAction(
+	document: vscode.TextDocument,
 	diagnostics: readonly vscode.Diagnostic[],
-): vscode.Diagnostic[] =>
-	diagnostics.filter((diagnostic) =>
+	kind: vscode.CodeActionKind,
+): vscode.CodeAction | undefined {
+	const matchingDiagnostics = diagnostics.filter((diagnostic) =>
 		diagnostic.message.includes(UNUSED_DIAGNOSTIC_FRAGMENT),
 	)
-
-export function createGouseQuickFix(
-	document: vscode.TextDocument,
-	diagnostics: readonly vscode.Diagnostic[],
-): vscode.CodeAction | undefined {
-	const matchingDiagnostics = getMatchingDiagnostics(diagnostics)
 	if (matchingDiagnostics.length === 0) return undefined
 
-	const action = new vscode.CodeAction(
-		'Apply gouse to fix unused variables in this file',
-		vscode.CodeActionKind.QuickFix,
-	)
+	const action = new vscode.CodeAction(ACTION_TITLE, kind)
 	action.command = {
 		command: 'gouse.toggle',
-		title: 'Apply gouse',
+		title: ACTION_TITLE,
 		arguments: [document.uri],
 	}
 	action.diagnostics = matchingDiagnostics
 	return action
 }
-
-export function createGouseSourceFixAll(
-	document: vscode.TextDocument,
-	diagnostics: readonly vscode.Diagnostic[],
-): vscode.CodeAction | undefined {
-	const matchingDiagnostics = getMatchingDiagnostics(diagnostics)
-	if (matchingDiagnostics.length === 0) return undefined
-
-	const action = new vscode.CodeAction(
-		'Fix all unused variables in this file with gouse',
-		createSourceFixAllKind(),
-	)
-	action.command = {
-		command: 'gouse.toggle',
-		title: 'Fix all unused variables with gouse',
-		arguments: [document.uri],
-	}
-	action.diagnostics = matchingDiagnostics
-	return action
-}
-
-const shouldProvideQuickFix = (
-	kind: vscode.CodeActionKind | undefined,
-): boolean =>
-	kind === undefined || kind.contains(vscode.CodeActionKind.QuickFix)
-
-const shouldProvideSourceFixAll = (
-	kind: vscode.CodeActionKind | undefined,
-): boolean => kind?.contains(createSourceFixAllKind()) ?? false
 
 class GouseCodeActionProvider implements vscode.CodeActionProvider {
 	provideCodeActions(
 		document: vscode.TextDocument,
-		_range: vscode.Range | vscode.Selection,
+		_: vscode.Range | vscode.Selection,
 		context: vscode.CodeActionContext,
 	): vscode.CodeAction[] {
 		const actions: vscode.CodeAction[] = []
 
-		if (shouldProvideQuickFix(context.only)) {
-			const quickFix = createGouseQuickFix(document, context.diagnostics)
+		if (
+			context.only === undefined ||
+			context.only.contains(vscode.CodeActionKind.QuickFix)
+		) {
+			const quickFix = createGouseCodeAction(
+				document,
+				context.diagnostics,
+				vscode.CodeActionKind.QuickFix,
+			)
 			if (quickFix) actions.push(quickFix)
 		}
 
-		if (shouldProvideSourceFixAll(context.only)) {
+		const sourceFixAllKind = createSourceFixAllKind()
+		if (context.only?.contains(sourceFixAllKind) ?? false) {
 			const fileDiagnostics = vscode.languages.getDiagnostics(document.uri)
-			const sourceFixAll = createGouseSourceFixAll(document, fileDiagnostics)
+			const sourceFixAll = createGouseCodeAction(
+				document,
+				fileDiagnostics,
+				sourceFixAllKind,
+			)
 			if (sourceFixAll) actions.push(sourceFixAll)
 		}
 
@@ -84,7 +61,7 @@ class GouseCodeActionProvider implements vscode.CodeActionProvider {
 	}
 }
 
-export function createGouseCodeActionProvider(): vscode.CodeActionProvider {
+export function newGouseCodeActionProvider(): vscode.CodeActionProvider {
 	return new GouseCodeActionProvider()
 }
 

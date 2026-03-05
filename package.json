@@ -4,7 +4,7 @@
 	"publisher": "looshch",
 	"description": "Toggle ‘declared and not used’ errors in Go",
 	"icon": "icon.png",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"engines": {
 		"vscode": "^1.69.0"
 	},
@@ -15,7 +15,7 @@
 	"main": "./out/extension.js",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/looshch/gouse-vsc"
+		"url": "https://github.com/vipkek/gouse-vsc"
 	},
 	"contributes": {
 		"commands": [
@@ -47,6 +47,11 @@
 					"type": "string",
 					"default": "",
 					"description": "Path to the gouse executable. Leave empty to resolve gouse from PATH."
+				},
+				"gouse.autoUpdateOnStartup": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically update gouse on startup when gouse is already installed and gouse.path is empty."
 				}
 			}
 		}
@@ -56,7 +61,7 @@
 		"compile": "npm run build:base -- --sourcemap",
 		"watch": "npm run build:base -- --sourcemap --watch",
 		"typecheck": "tsc --noEmit -p ./",
-		"compile-tests": "tsc -p ./tsconfig.test.json",
+		"compile-tests": "tsc -p ./tsconfig.test.json && tsc-alias -p ./tsconfig.test.json",
 		"test:package": "node ./scripts/check-package.cjs",
 		"vscode:prepublish": "npm run build:base -- --minify && npm run test:package",
 		"test": "npm run typecheck && npm run lint && npm run compile && npm run compile-tests && npm run test:package && node ./out/test/test/runTest.js",
@@ -80,6 +85,7 @@
 		"mocha": "^11.1.0",
 		"prettier": "^3.3.3",
 		"typescript": "^4.7.4",
-		"typescript-eslint": "^8.13.0"
+		"typescript-eslint": "^8.13.0",
+		"tsc-alias": "^1.8.16"
 	}
 }

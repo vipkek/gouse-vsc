@@ -1,8 +1,12 @@
 {
 	"compileOnSave": false,
 	"compilerOptions": {
+		"baseUrl": ".",
 		"outDir": "out",
 		"rootDir": "src",
+		"paths": {
+			"@test/*": ["src/test/*"]
+		},
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
 		"noUnusedLocals": true,

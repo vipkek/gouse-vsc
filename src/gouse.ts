@@ -2,10 +2,13 @@ import * as cp from 'child_process'
 import * as path from 'path'
 import * as vscode from 'vscode'
 
-const README_URL = 'https://github.com/looshch/gouse-vsc#readme'
+const README_URL = 'https://github.com/vipkek/gouse-vsc#readme'
+const GOUSE_MODULE_PATH = 'github.com/looshch/gouse/v2@latest'
 const INSTALL_ACTION = 'Install'
 const OPEN_README_ACTION = 'Open README'
 const OPEN_SETTINGS_ACTION = 'Open Settings'
+const AUTO_UPDATE_FAILURE_PREFIX = 'gouse auto-update failed:'
+const DEFAULT_NAME = 'gouse'
 
 interface ExecResult {
 	stdout: string
@@ -14,6 +17,42 @@ interface ExecResult {
 
 type ExecError = NodeJS.ErrnoException & {
 	stderr?: string
+}
+
+export interface AutoUpdateOnStartupParams {
+	getConfiguredExecutablePath: () => string
+	getAutoUpdateOnStartup: () => boolean
+	execFile: (
+		file: string,
+		args: readonly string[],
+	) => Promise<{
+		stdout: string
+		stderr: string
+	}>
+	resolveInstalledPath: () => Promise<string | undefined>
+	showWarningMessage: (message: string) => Thenable<unknown>
+}
+
+export interface ToggleParams {
+	getConfiguredExecutablePath: () => string
+	getResolvedExecutablePath: () => string
+	execFile: (
+		file: string,
+		args: readonly string[],
+	) => Promise<{
+		stdout: string
+		stderr: string
+	}>
+	resolveInstalledPath: () => Promise<string | undefined>
+	getActiveTextDocument: () => vscode.TextDocument | undefined
+	openTextDocument: (resource: vscode.Uri) => Thenable<vscode.TextDocument>
+	showWarningMessage: (message: string) => Thenable<unknown>
+	showErrorMessage: (
+		message: string,
+		...items: string[]
+	) => Thenable<string | undefined>
+	openReadme: () => Promise<void>
+	openExecutableSettings: () => Promise<void>
 }
 
 let installedExecutablePath: string | undefined
@@ -39,13 +78,13 @@ const execFile = (file: string, args: readonly string[]): Promise<ExecResult> =>
 		)
 	})
 
-const getConfiguredExecutablePath = (): string =>
+const getConfiguredGousePath = (): string =>
 	vscode.workspace.getConfiguration('gouse').get<string>('path', '').trim()
 
-const getDefaultExecutableName = (): string => 'gouse'
-
-const getPlatformBinaryName = (name: string): string =>
-	process.platform === 'win32' ? `${name}.exe` : name
+const getAutoUpdateOnStartup = (): boolean =>
+	vscode.workspace
+		.getConfiguration('gouse')
+		.get<boolean>('autoUpdateOnStartup', true)
 
 const openReadme = async (): Promise<void> => {
 	await vscode.env.openExternal(vscode.Uri.parse(README_URL))
@@ -64,181 +103,217 @@ const isMissingExecutable = (error: unknown): error is ExecError =>
 	'code' in error &&
 	(error as ExecError).code === 'ENOENT'
 
+const asExecError = (error: unknown): ExecError =>
+	error instanceof Error ?
+		(error as ExecError)
+	:	(new Error(String(error)) as ExecError)
+
 const getExecErrorMessage = (error: ExecError): string => {
 	const stderr = error.stderr?.trim()
 	return stderr ? stderr : error.message
 }
 
+const getAutoUpdateFailureMessage = (error: ExecError): string =>
+	isMissingExecutable(error) ?
+		`${AUTO_UPDATE_FAILURE_PREFIX} Go is not installed or is not available on PATH.`
+	:	`${AUTO_UPDATE_FAILURE_PREFIX} ${getExecErrorMessage(error)}`
+
 const getResolvedExecutablePath = (): string => {
-	const configuredExecutablePath = getConfiguredExecutablePath()
+	const configuredExecutablePath = getConfiguredGousePath()
 	if (configuredExecutablePath) return configuredExecutablePath
 
-	return installedExecutablePath ?? getDefaultExecutableName()
-}
-
-const resolveTargetDocument = async (
-	resource?: vscode.Uri,
-): Promise<vscode.TextDocument | undefined> => {
-	if (!resource) return vscode.window.activeTextEditor?.document
-	return vscode.workspace.openTextDocument(resource)
-}
-
-const validateTargetDocument = async (
-	resource?: vscode.Uri,
-): Promise<vscode.TextDocument | undefined> => {
-	const document = await resolveTargetDocument(resource)
-	if (!document) {
-		await vscode.window.showWarningMessage('Open a Go file to use gouse.')
-		return undefined
-	}
-	if (document.languageId !== 'go') {
-		await vscode.window.showWarningMessage('gouse only supports Go files.')
-		return undefined
-	}
-	if (document.uri.scheme !== 'file') {
-		await vscode.window.showWarningMessage(
-			'gouse only supports files saved on disk.',
-		)
-		return undefined
-	}
-	return document
-}
-
-const runGouse = async (
-	executablePath: string,
-	targetPath: string,
-): Promise<void> => {
-	await execFile(executablePath, ['-w', targetPath])
+	return installedExecutablePath ?? DEFAULT_NAME
 }
 
 const resolveInstalledPath = async (): Promise<string | undefined> => {
+	const gouseExecutableFilename =
+		process.platform === 'win32' ? `${DEFAULT_NAME}.exe` : DEFAULT_NAME
 	try {
 		const { stdout } = await execFile('go', ['env', 'GOBIN', 'GOPATH'])
 		const [rawGoBin = '', rawGoPath = ''] = stdout.split(/\r?\n/)
 		const goBin = rawGoBin.trim()
-		if (goBin) return path.join(goBin, getPlatformBinaryName('gouse'))
+		if (goBin) return path.join(goBin, gouseExecutableFilename)
 
 		const goPath = rawGoPath.trim()
 		if (!goPath) return undefined
 
-		const firstGoPath = goPath.split(path.delimiter).find(Boolean)
-		if (!firstGoPath) return undefined
+		const primaryGoPathEntry = goPath.split(path.delimiter).find(Boolean)
+		if (!primaryGoPathEntry) return undefined
 
-		return path.join(firstGoPath, 'bin', getPlatformBinaryName('gouse'))
+		return path.join(primaryGoPathEntry, 'bin', gouseExecutableFilename)
 	} catch {
 		return undefined
 	}
 }
 
-const showConfiguredPathError = async (
-	configuredPath: string,
-): Promise<void> => {
-	const action = await vscode.window.showErrorMessage(
-		`The configured gouse.path does not point to an executable: ${configuredPath}`,
-		OPEN_SETTINGS_ACTION,
-	)
-	if (action === OPEN_SETTINGS_ACTION) {
-		await openExecutableSettings()
+export async function _autoUpdateOnStartup(
+	params: AutoUpdateOnStartupParams,
+): Promise<void> {
+	if (!params.getAutoUpdateOnStartup()) return
+	if (params.getConfiguredExecutablePath()) return
+
+	try {
+		await params.execFile(DEFAULT_NAME, ['-v'])
+	} catch (error) {
+		if (isMissingExecutable(error)) return
+	}
+
+	try {
+		await params.execFile('go', ['install', GOUSE_MODULE_PATH])
+	} catch (error) {
+		const execError = asExecError(error)
+		await params.showWarningMessage(getAutoUpdateFailureMessage(execError))
+		return
+	}
+
+	const installedPath = await params.resolveInstalledPath()
+	if (installedPath) {
+		installedExecutablePath = installedPath
 	}
 }
 
-const showInstallPrompt = async (): Promise<boolean> => {
-	const action = await vscode.window.showErrorMessage(
+export async function autoUpdateOnStartup(): Promise<void> {
+	try {
+		await _autoUpdateOnStartup({
+			getConfiguredExecutablePath: getConfiguredGousePath,
+			getAutoUpdateOnStartup,
+			execFile,
+			resolveInstalledPath,
+			showWarningMessage: (message: string) =>
+				vscode.window.showWarningMessage(message),
+		})
+	} catch (error) {
+		const execError = asExecError(error)
+		await vscode.window.showWarningMessage(
+			getAutoUpdateFailureMessage(execError),
+		)
+	}
+}
+
+export async function _toggle(
+	resource: vscode.Uri | undefined,
+	params: ToggleParams,
+): Promise<void> {
+	const document =
+		resource ?
+			await params.openTextDocument(resource)
+		:	params.getActiveTextDocument()
+	if (!document) {
+		await params.showWarningMessage('Open a Go file to use gouse.')
+		return
+	}
+	if (document.languageId !== 'go') {
+		await params.showWarningMessage('gouse only supports Go files.')
+		return
+	}
+	if (document.uri.scheme !== 'file') {
+		await params.showWarningMessage('gouse only supports files saved on disk.')
+		return
+	}
+
+	const wasSaved = await document.save()
+	if (!wasSaved) {
+		await params.showWarningMessage('Save the file before running gouse.')
+		return
+	}
+
+	const configuredPath = params.getConfiguredExecutablePath()
+	const executablePath = configuredPath || params.getResolvedExecutablePath()
+
+	try {
+		await params.execFile(executablePath, ['-w', document.uri.fsPath])
+		return
+	} catch (error) {
+		const execError = asExecError(error)
+		if (!isMissingExecutable(execError)) {
+			await params.showErrorMessage(
+				`gouse failed: ${getExecErrorMessage(execError)}`,
+			)
+			return
+		}
+		if (configuredPath) {
+			const action = await params.showErrorMessage(
+				`The configured gouse.path does not point to an executable: ${configuredPath}`,
+				OPEN_SETTINGS_ACTION,
+			)
+			if (action === OPEN_SETTINGS_ACTION) {
+				await params.openExecutableSettings()
+			}
+			return
+		}
+	}
+
+	const installAction = await params.showErrorMessage(
 		'gouse is not installed or is not available on PATH.',
 		INSTALL_ACTION,
 		OPEN_README_ACTION,
 	)
-	if (action === OPEN_README_ACTION) {
-		await openReadme()
-		return false
+	if (installAction === OPEN_README_ACTION) {
+		await params.openReadme()
+		return
 	}
-	return action === INSTALL_ACTION
-}
+	if (installAction !== INSTALL_ACTION) return
 
-const installGouse = async (): Promise<string | undefined> => {
 	try {
-		await execFile('go', ['install', 'github.com/looshch/gouse@latest'])
+		await params.execFile('go', ['install', GOUSE_MODULE_PATH])
 	} catch (error) {
-		const execError = error as ExecError
-		const action = await vscode.window.showErrorMessage(
+		const execError = asExecError(error)
+		const action = await params.showErrorMessage(
 			isMissingExecutable(execError) ?
 				'Go is not installed or is not available on PATH, so gouse could not be installed.'
 			:	`Failed to install gouse: ${getExecErrorMessage(execError)}`,
 			OPEN_README_ACTION,
 		)
 		if (action === OPEN_README_ACTION) {
-			await openReadme()
+			await params.openReadme()
 		}
-		return undefined
+		return
 	}
 
-	const installedPath = await resolveInstalledPath()
+	const installedPath = await params.resolveInstalledPath()
 	if (installedPath) {
 		installedExecutablePath = installedPath
-		return installedPath
 	}
-
-	return getResolvedExecutablePath()
-}
-
-const runWithInstallFallback = async (targetPath: string): Promise<void> => {
-	const configuredPath = getConfiguredExecutablePath()
-	const executablePath = configuredPath || getResolvedExecutablePath()
+	const executablePathAfterInstall =
+		installedPath ?? params.getResolvedExecutablePath()
 
 	try {
-		await runGouse(executablePath, targetPath)
-		return
+		await params.execFile(executablePathAfterInstall, [
+			'-w',
+			document.uri.fsPath,
+		])
 	} catch (error) {
-		const execError = error as ExecError
-		if (!isMissingExecutable(execError)) {
-			await vscode.window.showErrorMessage(
-				`gouse failed: ${getExecErrorMessage(execError)}`,
-			)
-			return
-		}
-		if (configuredPath) {
-			await showConfiguredPathError(configuredPath)
-			return
-		}
-	}
-
-	const shouldInstall = await showInstallPrompt()
-	if (!shouldInstall) return
-
-	const installedPath = await installGouse()
-	if (!installedPath) return
-
-	try {
-		await runGouse(installedPath, targetPath)
-	} catch (error) {
-		const execError = error as ExecError
+		const execError = asExecError(error)
 		if (isMissingExecutable(execError)) {
-			const action = await vscode.window.showErrorMessage(
+			const action = await params.showErrorMessage(
 				'gouse was installed, but the executable is still not reachable. Set gouse.path or add your Go bin directory to PATH.',
 				OPEN_SETTINGS_ACTION,
 			)
 			if (action === OPEN_SETTINGS_ACTION) {
-				await openExecutableSettings()
+				await params.openExecutableSettings()
 			}
 			return
 		}
-		await vscode.window.showErrorMessage(
+		await params.showErrorMessage(
 			`gouse failed after installation: ${getExecErrorMessage(execError)}`,
 		)
 	}
 }
 
 export async function toggle(resource?: vscode.Uri): Promise<void> {
-	const document = await validateTargetDocument(resource)
-	if (!document) return
-
-	const wasSaved = await document.save()
-	if (!wasSaved) {
-		await vscode.window.showWarningMessage(
-			'Save the file before running gouse.',
-		)
-		return
-	}
-
-	await runWithInstallFallback(document.uri.fsPath)
+	await _toggle(resource, {
+		getConfiguredExecutablePath: getConfiguredGousePath,
+		getResolvedExecutablePath,
+		execFile,
+		resolveInstalledPath,
+		getActiveTextDocument: () => vscode.window.activeTextEditor?.document,
+		openTextDocument: (targetResource) =>
+			vscode.workspace.openTextDocument(targetResource),
+		showWarningMessage: (message: string) =>
+			vscode.window.showWarningMessage(message),
+		showErrorMessage: (message: string, ...items: string[]) =>
+			vscode.window.showErrorMessage(message, ...items),
+		openReadme,
+		openExecutableSettings,
+	})
 }
